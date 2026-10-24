@@ -1,18 +1,22 @@
-import torch
-import torchvision
-from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
-from torchvision.transforms import functional as F
-from torch.utils.data import DataLoader, Dataset
+import argparse
+import os
+import sys
 import time
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
+import torch
+import torchvision
+from torch.utils.data import DataLoader, Dataset, Subset
+from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+from torchvision.transforms import functional as F
+
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from utils import DATA_DIR, MODELS_DIR, classification_metrics, get_device, save_results
 
 
-# 1. Custom Dataset for Faster R-CNN on MNIST
 class MNISTDetectionDataset(Dataset):
+    """MNIST transformé en détection : 1 boîte englobante par chiffre."""
+
     def __init__(self, root, train=True):
-        # Load base MNIST data
         self.mnist = torchvision.datasets.MNIST(root=root, train=train, download=True)
 
     def __len__(self):
@@ -20,83 +24,109 @@ class MNISTDetectionDataset(Dataset):
 
     def __getitem__(self, idx):
         img, label = self.mnist[idx]
-        img_tensor = F.to_tensor(img)
+        img_tensor = F.to_tensor(img).repeat(3, 1, 1)  # Faster R-CNN attend 3 canaux
 
-        # Faster R-CNN expects 3-channel images
-        img_tensor = img_tensor.repeat(3, 1, 1)
-
-        # Extract bounding box from non-zero pixels
         pos = torch.where(img_tensor[0] > 0)
-        if pos[0].numel() == 0:  # Handle completely blank images just in case
+        if pos[0].numel() == 0:
             xmin, ymin, xmax, ymax = 0, 0, 28, 28
         else:
-            xmin = torch.min(pos[1]).item()
-            xmax = torch.max(pos[1]).item()
-            ymin = torch.min(pos[0]).item()
-            ymax = torch.max(pos[0]).item()
+            xmin, xmax = torch.min(pos[1]).item(), torch.max(pos[1]).item()
+            ymin, ymax = torch.min(pos[0]).item(), torch.max(pos[0]).item()
+            if xmin == xmax:
+                xmax += 1
+            if ymin == ymax:
+                ymax += 1
 
-            # Ensure valid box dimensions
-            if xmin == xmax: xmax += 1
-            if ymin == ymax: ymax += 1
-
-        boxes = torch.as_tensor([[xmin, ymin, xmax, ymax]], dtype=torch.float32)
-
-        # Shift labels by 1 because 0 represents the background in Faster R-CNN
-        labels = torch.as_tensor([label + 1], dtype=torch.int64)
-
-        target = {}
-        target["boxes"] = boxes
-        target["labels"] = labels
-
+        target = {
+            "boxes": torch.as_tensor([[xmin, ymin, xmax, ymax]], dtype=torch.float32),
+            "labels": torch.as_tensor([label + 1], dtype=torch.int64),  # 0 = fond
+        }
         return img_tensor, target
 
 
-# Collate function required for handling dictionaries in object detection dataloaders
 def collate_fn(batch):
     return tuple(zip(*batch))
 
 
-batch_size = 8  # Kept small to prevent OOM errors on limited GPUs
-train_dataset = MNISTDetectionDataset(root='./data', train=True)
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+def build_model(num_classes=11, img_size=128):
+    # min_size/max_size : évite de upscaler les 28x28 jusqu'à 800 px (très lent)
+    model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
+        weights="DEFAULT", min_size=img_size, max_size=img_size
+    )
+    in_features = model.roi_heads.box_predictor.cls_score.in_features
+    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+    return model
 
-# 2. Faster R-CNN Model Setup
-# Load a pre-trained model for fine-tuning
-model = torchvision.models.detection.fasterrcnn_resnet50_fpn(weights='DEFAULT')
 
-# Replace the classifier with a new one for MNIST (10 digits + 1 background = 11 classes)
-num_classes = 11
-in_features = model.roi_heads.box_predictor.cls_score.in_features
-model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+def evaluate(model, loader, device):
+    # 1) Prédictions -> accuracy / F1 (label du détecteur le plus confiant)
+    model.eval()
+    preds, labels = [], []
+    with torch.no_grad():
+        for images, targets in loader:
+            outputs = model([im.to(device) for im in images])
+            for out, tgt in zip(outputs, targets):
+                if len(out["scores"]) > 0:
+                    pred = out["labels"][torch.argmax(out["scores"])].item() - 1
+                else:
+                    pred = -1  # aucune détection
+                preds.append(pred)
+                labels.append(tgt["labels"][0].item() - 1)
+    acc, f1 = classification_metrics(labels, preds)
 
-model = model.to(device)
-
-# 3. Optimizer
-params = [p for p in model.parameters() if p.requires_grad]
-optimizer = torch.optim.SGD(params, lr=0.005, momentum=0.9, weight_decay=0.0005)
-
-# 4. Training Loop
-num_epochs = 3
-start_time = time.time()
-
-for epoch in range(num_epochs):
+    # 2) Loss de détection sur le jeu de test (mode train mais sans gradient)
     model.train()
-    running_loss = 0.0
-    for i, (images, targets) in enumerate(train_loader):
-        images = list(image.to(device) for image in images)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+    total, n = 0.0, 0
+    with torch.no_grad():
+        for images, targets in loader:
+            images = [im.to(device) for im in images]
+            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+            total += sum(model(images, targets).values()).item()
+            n += 1
+    return acc, f1, total / n
 
-        loss_dict = model(images, targets)
-        losses = sum(loss for loss in loss_dict.values())
 
-        optimizer.zero_grad()
-        losses.backward()
-        optimizer.step()
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--epochs", type=int, default=2)
+    parser.add_argument("--train-subset", type=int, default=6000)
+    parser.add_argument("--test-subset", type=int, default=1000)
+    parser.add_argument("--batch-size", type=int, default=8)
+    args = parser.parse_args()
 
-        running_loss += losses.item()
+    device = get_device()
+    train_ds = Subset(MNISTDetectionDataset(DATA_DIR, train=True), range(args.train_subset))
+    test_ds = Subset(MNISTDetectionDataset(DATA_DIR, train=False), range(args.test_subset))
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
 
-        if (i + 1) % 100 == 0:
-            print(f"Epoch [{epoch + 1}/{num_epochs}], Step [{i + 1}/{len(train_loader)}], Loss: {losses.item():.4f}")
+    model = build_model().to(device)
+    params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.SGD(params, lr=0.005, momentum=0.9, weight_decay=0.0005)
 
-train_time = time.time() - start_time
-print(f"Total Faster R-CNN Training Time: {train_time:.2f} seconds")
+    start = time.time()
+    for epoch in range(args.epochs):
+        model.train()
+        for i, (images, targets) in enumerate(train_loader):
+            images = [im.to(device) for im in images]
+            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+            losses = sum(model(images, targets).values())
+            optimizer.zero_grad()
+            losses.backward()
+            optimizer.step()
+            if (i + 1) % 100 == 0:
+                print(f"Epoch [{epoch + 1}/{args.epochs}], Step [{i + 1}/{len(train_loader)}], "
+                      f"Loss: {losses.item():.4f}")
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    train_time = time.time() - start
+    print(f"Temps d'entraînement Faster R-CNN : {train_time:.2f} s")
+
+    acc, f1, loss = evaluate(model, test_loader, device)
+    print(f"[faster_rcnn] Accuracy: {acc * 100:.2f}% | F1: {f1:.4f} | Loss: {loss:.4f}")
+    save_results("faster_rcnn", acc, f1, loss, train_time)
+    torch.save(model.state_dict(), os.path.join(MODELS_DIR, "faster_rcnn.pth"))
+
+
+if __name__ == "__main__":
+    main()

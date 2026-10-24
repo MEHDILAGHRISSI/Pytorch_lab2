@@ -1,3 +1,6 @@
 __pycache__/
-
 .venv/
+.idea/
+data/
+models/
+*.pth
