@@ -112,8 +112,3 @@ Faster R-CNN atteint 98,40 %, ce qui le place devant AlexNet et le ViT, mais il 
 
 ---
 
-## Synthèse personnelle
-
-*(À adapter avec tes propres mots.)*
-
-Ce lab m'a permis de découvrir PyTorch de bout en bout : construire un CNN couche par couche, charger et transformer un dataset, écrire une boucle d'entraînement, utiliser le GPU (`cuda`) et calculer plusieurs métriques (accuracy, F1, loss, temps). J'ai appris à adapter un modèle pré-entraîné (remplacer la dernière couche, geler les couches convolutives) et à adapter un dataset de classification à un détecteur d'objets comme Faster R-CNN. J'ai aussi implémenté un Vision Transformer from scratch (découpage en patchs, token CLS, attention multi-têtes). Enfin, j'ai compris qu'un modèle plus gros ou plus récent n'est pas forcément meilleur : sur MNIST, un petit CNN bat VGG16, Faster R-CNN et le ViT, et il faut comparer les modèles dans des conditions équivalentes (mêmes données, même nombre d'époques) pour tirer des conclusions fiables.
