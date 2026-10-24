@@ -4,7 +4,7 @@ Université Abdelmalek Essaadi – FST Tanger – Département Génie Informatiq
 Module : Deep Learning – Pr. ELAACHAK Lotfi
 Auteur : Mehdi Laghrissi
 
-**Notebook Kaggle (exécuté en mode GPU) : [LIEN_KAGGLE)](https://www.kaggle.com/code/laghrissimehdi/notebookcaf6de140a)**
+**Notebook Kaggle (exécuté en mode GPU) : [LIEN_KAGGLE](https://www.kaggle.com/code/laghrissimehdi/notebookcaf6de140a)**
 
 ## Objectif
 
