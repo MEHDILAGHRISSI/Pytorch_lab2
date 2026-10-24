@@ -1,0 +1,7 @@
+{
+  "model": "vit_scratch",
+  "accuracy": 0.9781,
+  "f1_score": 0.978,
+  "loss": 0.0712,
+  "train_time_s": 155.93
+}

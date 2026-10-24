@@ -1,0 +1,7 @@
+{
+  "model": "custom_cnn",
+  "accuracy": 0.9906,
+  "f1_score": 0.9905,
+  "loss": 0.0282,
+  "train_time_s": 70.35
+}

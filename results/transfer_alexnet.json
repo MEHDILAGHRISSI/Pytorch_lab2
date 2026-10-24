@@ -1,0 +1,7 @@
+{
+  "model": "transfer_alexnet",
+  "accuracy": 0.9825,
+  "f1_score": 0.9825,
+  "loss": 0.061,
+  "train_time_s": 384.08
+}

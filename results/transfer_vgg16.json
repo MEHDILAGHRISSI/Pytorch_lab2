@@ -1,0 +1,7 @@
+{
+  "model": "transfer_vgg16",
+  "accuracy": 0.9857,
+  "f1_score": 0.9856,
+  "loss": 0.1087,
+  "train_time_s": 1222.83
+}
