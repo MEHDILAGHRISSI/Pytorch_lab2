@@ -106,6 +106,15 @@ Faster R-CNN atteint 98,40 %, ce qui le place devant AlexNet et le ViT, mais il 
 | Paramètres | 139 018 |
 | Entraînement | Adam (lr = 1e-3, weight decay = 1e-4), 10 époques, batch = 128 |
 
+
+**Écarts avec le tutoriel.** L'architecture suit le tutoriel de Brian Pulfer (patchs → projection linéaire → token `[CLS]` → encodage positionnel → blocs encodeur LN-MSA-résiduel / LN-MLP-résiduel → MLP de classification), avec les adaptations suivantes :
+- découpage en patchs par une `Conv2d` (équivalente à `patchify` + couche linéaire, mais bien plus rapide) ;
+- 16 patchs de 7×7 au lieu de 49 patchs de 4×4 ;
+- embeddings positionnels appris au lieu de sinus/cosinus fixes ;
+- modèle plus grand (dim = 64, 4 blocs, 4 têtes, 139 k paramètres au lieu de dim = 8, 2 blocs, 2 têtes) et 10 époques ;
+- attention multi-têtes vectorisée (une projection q/k/v fusionnée) avec dropout ;
+- le modèle renvoie des logits : le `Softmax` final du tutoriel est retiré car `CrossEntropyLoss` l'applique déjà (le double softmax ralentit l'apprentissage, ce qui explique en partie les ~80 % du tutoriel contre 97,81 % ici).
+
 **Résultats :** 97,81 % d'accuracy, F1 = 0,9780, loss = 0,0712, 155,9 s d'entraînement.
 
 **Interprétation :** le ViT entraîné from scratch est environ 1,2 point en dessous du CNN (99,06 %) et environ 2 fois plus lent (156 s contre 70 s), mais il reste proche des modèles pré-entraînés et de Faster R-CNN, sans aucun pré-entraînement et avec seulement 139 k paramètres. Sa loss d'entraînement diminuait encore à la 10ᵉ époque (0,0668) : plus d'époques ou de l'augmentation de données l'amélioreraient probablement. Contrairement au CNN, le ViT n'a pas de biais inductif de localité ni de partage de poids : il doit apprendre ces structures à partir des données, ce qui est moins efficace sur un petit dataset comme MNIST. Les ViT prennent l'avantage avec de grandes quantités de données.
